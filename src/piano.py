@@ -2,7 +2,8 @@ import curses
 
 from lib.app import App
 from lib.component import Component
-from lib.midi import MidiInput, note_name
+from lib.keyboard import Keyboard, note_name
+from lib.synth import Synth
 
 BLACK_KEYS = {1, 3, 6, 8, 10}  # C# D# F# G# A#
 LOW_NOTE = 48                  # C3 nằm ở dưới cùng lúc đầu
@@ -30,7 +31,7 @@ class TopBar(Component):
 
         super().draw()
 
-class Keyboard(Component):
+class DisplayKeyboard(Component):
     def __init__(self):
         super().__init__()
         self.pressed = set()  # số nốt đang bấm
@@ -107,18 +108,22 @@ class Keyboard(Component):
 
 def main():
     topbar = TopBar()
-    keyboard = Keyboard()
-    midi = MidiInput(on_note=[
+    keyboard = DisplayKeyboard()
+    synth = Synth(gain=1.0)
+    midi = Keyboard(on_note=[
+        synth.play,
         lambda note: topbar.set_text(midi.held_text),
         keyboard.on_note,
     ])
     try:
+        synth.open()
         midi.open()
         curses.wrapper(App([topbar, keyboard], midi).run)
     except KeyboardInterrupt:
         pass
     finally:
         midi.close()
+        synth.close()
 
 if __name__ == "__main__":
     main()

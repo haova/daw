@@ -1,71 +1,68 @@
-import queue
-from collections import namedtuple
-
 import mido
 
-NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+from lib.song import Note, Song, Track
 
-def note_name(n):
-    return f"{NOTE_NAMES[n % 12]}{n // 12 - 1}"
+def load(path):
+    song = Song()
+    programs = {}
+    open_notes = {}
+    tracks = {}
+    now = 0.0
+    bpm_found = False
 
-# note: số nốt MIDI (0-127), velocity: lực bấm, on: True nhấn / False nhả
-class Note(namedtuple("Note", "note velocity on")):
-    __slots__ = ()
+    def close(channel, pitch):
+        start, velocity, program = open_notes.pop((channel, pitch))
+        track = tracks.setdefault((channel, program), Track(channel, program))
+        track.notes.append(Note(pitch, velocity, start, now))
 
-    @property
-    def name(self):
-        return note_name(self.note)
+    for msg in mido.MidiFile(path):
+        now += msg.time
+        if msg.type == "set_tempo" and not bpm_found:
+            song.bpm = mido.tempo2bpm(msg.tempo)
+            bpm_found = True
+        elif msg.type == "program_change":
+            programs[msg.channel] = msg.program
+        elif msg.type == "note_on" and msg.velocity > 0:
+            if (msg.channel, msg.note) in open_notes:
+                close(msg.channel, msg.note)
+            open_notes[(msg.channel, msg.note)] = (now, msg.velocity, programs.get(msg.channel, 0))
+        elif msg.type in ("note_on", "note_off") and (msg.channel, msg.note) in open_notes:
+            close(msg.channel, msg.note)
 
-class MidiInput:
-    def __init__(self, name=None, on_note=()):
-        self.name = name  # None: lấy port thật đầu tiên
-        self.on_note = on_note  # list callback gọi mỗi khi có nốt, CHẠY Ở LUỒNG CỦA MIDO: không được đụng curses
-        self._port = None
-        self._queue = queue.Queue()
-        self._held = set()  # số nốt đang giữ
+    for channel, pitch in list(open_notes):
+        close(channel, pitch)
 
-    def open(self):
-        name = self.name or self._default_port()
-        self._port = mido.open_input(name, callback=self._on_message)
+    for track in tracks.values():
+        track.notes.sort(key=lambda n: (n.start, n.pitch))
+    song.tracks = sorted(tracks.values(), key=lambda t: (t.channel, t.program))
+    return song
 
-    @property
-    def held_text(self):
-        return " ".join(note_name(n) for n in sorted(self._held))
+def write(song, path, ppq=480):
+    mid = mido.MidiFile(ticks_per_beat=ppq)
 
-    def close(self):
-        if self._port:
-            self._port.close()
-            self._port = None
+    tempo = mido.MidiTrack()
+    tempo.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(song.bpm)))
+    tempo.append(mido.MetaMessage("end_of_track"))
+    mid.tracks.append(tempo)
 
-    def poll(self):
-        notes = []
-        while True:
-            try:
-                notes.append(self._queue.get_nowait())
-            except queue.Empty:
-                return notes
+    to_tick = lambda sec: round(sec * song.bpm / 60 * ppq)
 
-    def _default_port(self):
-        for name in mido.get_input_names():
-            if "Through" not in name:
-                return name
-        raise RuntimeError("không thấy thiết bị MIDI nào")
+    for t in song.tracks:
+        if not t.notes:
+            continue
+        events = [(to_tick(t.notes[0].start), 0, mido.Message("program_change", channel=t.channel, program=t.program))]
+        for n in t.notes:
+            start, end = to_tick(n.start), to_tick(n.end)
+            events.append((start, 2, mido.Message("note_on", channel=t.channel, note=n.pitch, velocity=n.velocity)))
+            events.append((max(end, start + 1), 1, mido.Message("note_off", channel=t.channel, note=n.pitch)))
+        events.sort(key=lambda e: e[:2])
 
-    # chạy ở luồng của mido
-    def _on_message(self, msg):
-        if msg.type == "note_on":
-            # note_on với velocity 0 nghĩa là nhả phím
-            note = Note(msg.note, msg.velocity, msg.velocity > 0)
-        elif msg.type == "note_off":
-            note = Note(msg.note, msg.velocity, False)
-        else:
-            return
+        track = mido.MidiTrack()
+        last = 0
+        for tick, _, msg in events:
+            track.append(msg.copy(time=tick - last))
+            last = tick
+        track.append(mido.MetaMessage("end_of_track"))
+        mid.tracks.append(track)
 
-        if note.on:
-            self._held.add(note.note)
-        else:
-            self._held.discard(note.note)
-
-        self._queue.put(note)
-        for f in self.on_note:
-            f(note)
+    mid.save(path)
