@@ -66,13 +66,19 @@ class App:
         event = 1
         if len(parts) > 1:
             fields = parts[1].split(":")
-            mods = int(fields[0])
-            if len(fields) > 1:
+            if fields[0]:
+                mods = int(fields[0])
+            if len(fields) > 1 and fields[1]:
                 event = int(fields[1])
+
+        # ký tự gõ ra: mã Unicode cách nhau bởi ":"
+        text = ""
+        if len(parts) > 2:
+            text = "".join(chr(int(c)) for c in parts[2].split(":") if c)
 
         # modifier = 1 + bitmask: shift=1, alt=2, ctrl=4
         m = mods - 1
-        return Key(code, event, bool(m & 1), bool(m & 2), bool(m & 4))
+        return Key(code, event, bool(m & 1), bool(m & 2), bool(m & 4), text)
 
     def _loop(self, stdscr):
         while self.running:

@@ -9,6 +9,7 @@ def load(path):
     tracks = {}
     now = 0.0
     bpm_found = False
+    signature_found = False
 
     def close(channel, pitch):
         start, velocity, program = open_notes.pop((channel, pitch))
@@ -20,6 +21,9 @@ def load(path):
         if msg.type == "set_tempo" and not bpm_found:
             song.bpm = mido.tempo2bpm(msg.tempo)
             bpm_found = True
+        elif msg.type == "time_signature" and not signature_found:
+            song.time_signature = (msg.numerator, msg.denominator)
+            signature_found = True
         elif msg.type == "program_change":
             programs[msg.channel] = msg.program
         elif msg.type == "note_on" and msg.velocity > 0:
@@ -42,6 +46,8 @@ def write(song, path, ppq=480):
 
     tempo = mido.MidiTrack()
     tempo.append(mido.MetaMessage("set_tempo", tempo=mido.bpm2tempo(song.bpm)))
+    numerator, denominator = song.time_signature
+    tempo.append(mido.MetaMessage("time_signature", numerator=numerator, denominator=denominator))
     tempo.append(mido.MetaMessage("end_of_track"))
     mid.tracks.append(tempo)
 

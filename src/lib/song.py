@@ -17,6 +17,12 @@ class Track:
 class Song:
     bpm: float = 120.0
     tracks: list[Track] = field(default_factory=list)
+    time_signature: tuple[int, int] = (4, 4)
+
+    @property
+    def beats_per_bar(self):
+        numerator, denominator = self.time_signature
+        return numerator * 4 / denominator
 
     @property
     def length(self):
