@@ -7,7 +7,8 @@ FINE_STEP = 0.25                        # 1 nốt móc kép
 EPSILON = 1e-6
 CHORD_WINDOW = 0.05  # giây: các nốt bấm cách nhau không quá mức này mới là một hợp âm
 INSERT = "insert"        # chèn: đẩy các nốt phía sau
-OVERWRITE = "overwrite"  # ghi đè: thay các nốt tại chỗ
+OVERWRITE = "overwrite"  # ghi đè: ghi chồng thêm lên, không xóa nốt đã có
+PLAY = "play"            # chỉ đánh đàn: không ghi nốt từ midi keyboard, các thao tác khác vẫn như thường
 MIN_BPM = 20
 MAX_BPM = 300
 
@@ -20,10 +21,11 @@ class Recorder:
         self.beats = beats
         self.cursor = self.song.length
         self.recording = False
-        self.mode = INSERT
+        self.mode = PLAY
         self._held = set()
         self._pending = False
         self._chord_start = 0.0
+        self._play_to = None  # chế độ PLAY: vị trí con trỏ sau khi nhả hợp âm đang giữ
         self.set_bpm(self.song.bpm)  # file nạp vào có thể có BPM lẻ
 
     @property
@@ -32,7 +34,9 @@ class Recorder:
 
     @property
     def head(self):
-        return self.cursor + self.step if self._pending else self.cursor
+        if not self._pending:
+            return self.cursor
+        return self._play_to if self._play_to is not None else self.cursor + self.step
 
     def set_bpm(self, bpm):
         # nốt lưu bằng giây, đổi tempo thì co giãn để vẫn đúng phách cũ
@@ -115,13 +119,9 @@ class Recorder:
                     for n in notes]
 
     def _make_room(self):
-        # chèn: đẩy nốt phía sau con trỏ ra một bước; ghi đè: xóa nốt đang nằm trong bước đó
+        # chèn: đẩy nốt phía sau con trỏ ra một bước; ghi đè: giữ nguyên các nốt, ghi chồng thêm lên
         if self.mode == INSERT:
             self._shift(self.cursor, self.step)
-        else:
-            end = self.cursor + self.step
-            self.track.notes[:] = [n for n in self.track.notes
-                                   if not self.cursor - EPSILON <= n.start < end - EPSILON]
 
     def move(self, direction, fine=False):
         if not self.recording or self._pending:
@@ -139,10 +139,19 @@ class Recorder:
     def resume(self):
         self.recording = True
 
+    def set_mode(self, mode):
+        self.mode = mode
+        if mode == PLAY:  # bỏ hợp âm đang chờ ghi dở
+            self._pending = False
+            self._play_to = None
+            self._held.clear()
+
     def stop(self):
         self.recording = False
 
     def toggle(self):
+        if self.mode == PLAY:
+            return  # start() xóa bài mà chế độ này không ghi được gì
         if self.recording:
             self.stop()
         else:
@@ -151,15 +160,25 @@ class Recorder:
     def on_note(self, event):
         if not self.recording:
             return
+        play = self.mode == PLAY  # chỉ đánh đàn: con trỏ vẫn dịch như khi ghi nhưng không đụng tới nốt nào
         if event.on:
             now = time.monotonic()
             if self._pending and now - self._chord_start > CHORD_WINDOW:
                 self._advance()  # bấm nhanh nối tiếp, không phải hợp âm
+            if play and not self._pending:
+                if self.cursor >= self.song.length - EPSILON:
+                    return  # chỉ đánh đàn mà con trỏ ở cuối bài thì không dịch nữa
+                self._play_to = self._next_cursor()
             if not self._pending:
-                self._make_room()
+                if not play:
+                    self._make_room()
                 self._chord_start = now
-            end = self.cursor + self.step
-            self.track.notes.append(Note(event.note, event.velocity, self.cursor, end))
+            if not play:
+                end = self.cursor + self.step
+                # chồng lên chính nốt đó (cùng cao độ, cùng chỗ) thì thay, không để hai nốt trùng nhau
+                self.track.notes[:] = [n for n in self.track.notes
+                                       if not (n.pitch == event.note and abs(n.start - self.cursor) < EPSILON)]
+                self.track.notes.append(Note(event.note, event.velocity, self.cursor, end))
             self._held.add(event.note)
             self._pending = True
         else:
@@ -167,7 +186,21 @@ class Recorder:
             if self._pending and not self._held:
                 self._advance()
 
+    def _next_cursor(self):
+        # chỉ đánh đàn: con trỏ đi hết nốt có sẵn kế tiếp (bỏ qua khoảng nghỉ phía trước), không vượt quá đầu nốt sau nó
+        ahead = [n for t in self.song.tracks for n in t.notes if n.start >= self.cursor - EPSILON]
+        if not ahead:
+            return self.song.length
+        first = min(n.start for n in ahead)
+        duration = min(n.end - n.start for n in ahead if n.start - first < EPSILON)
+        later = [n.start for n in ahead if n.start - first >= EPSILON]
+        to = first + duration
+        if later:
+            to = min(to, min(later))
+        return to if to > self.cursor + EPSILON else self.cursor + self.step
+
     def _advance(self):
-        self.cursor += self.step
+        self.cursor = self._play_to if self._play_to is not None else self.cursor + self.step
+        self._play_to = None
         self._pending = False
         self._held.clear()

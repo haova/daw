@@ -10,7 +10,7 @@ from lib.key import (BACKSPACE, ENTER, ESC, SPACE, KEY_B, KEY_D, KEY_DOWN, KEY_E
 from lib import midi as midi_file
 from lib.keyboard import Keyboard, note_name, parse_note, scale_velocity
 from lib.player import Player
-from lib.recorder import INSERT, OVERWRITE, Recorder
+from lib.recorder import INSERT, OVERWRITE, PLAY, Recorder
 from lib.synth import Synth
 
 BLACK_KEYS = {1, 3, 6, 8, 10}  # C# D# F# G# A#
@@ -61,7 +61,8 @@ class TopBar(Component):
                 self.player.play(0.0 if key.shift or at_end else cursor)
             return True
         if key.code in MODE_KEYS:
-            self.recorder.mode = MODE_KEYS[key.code]
+            mode = MODE_KEYS[key.code]
+            self.recorder.set_mode(PLAY if self.recorder.mode == mode else mode)  # bấm lại thì về chỉ đánh đàn
             return True
         if key.code in FIELD_KEYS:
             self.selected = FIELD_KEYS[key.code]
@@ -286,17 +287,19 @@ class View(Component):
         # con trỏ đi từ trái sang phải, tới mép phải thì nốt mới trôi dần sang trái
         # đang phát thì con trỏ là vị trí phát, không thì là đầu ghi
         head = self.player.position if self.player.playing else self.recorder.head
-        self.time = max(0.0, head - (w - 1) / self.scale)
-
-        x = round((head - self.time) * self.scale)
-        cursor_x = x if 0 <= x < w else None
+        # mọi vị trí tính theo ô nguyên (1 ký tự): con trỏ nhích từng ô, view dời cả ô nên độ dài nốt không nhảy
+        scale = self.scale
+        head_cell = round(head * scale)  # cùng cách làm tròn với vị trí nốt, để con trỏ trùng đầu nốt
+        origin = max(0, head_cell - (w - 1))
+        self.time = origin / scale
+        cursor_x = head_cell - origin
 
         # vạch ô nhịp màu xám chạy suốt view, số ô nhịp ở hàng border dưới cùng
         song = self.recorder.song
         bar_seconds = song.beats_per_bar * 60 / song.bpm
         bar = int(self.time // bar_seconds)
         while True:
-            x = round((bar * bar_seconds - self.time) * self.scale)
+            x = round(bar * bar_seconds * scale) - origin
             if x >= w:
                 break
             if x >= 0:
@@ -316,8 +319,8 @@ class View(Component):
             for track in self.song.tracks:
                 for n in track.notes:
                     row = h - 2 - (n.pitch - self.keyboard.low)
-                    left = round((n.start - self.time) * self.scale)
-                    right = max(round((n.end - self.time) * self.scale), left + 1)
+                    left = round(n.start * scale) - origin
+                    right = max(round(n.end * scale) - origin, left + 1)
                     if not 1 <= row < h - 1 or right <= 0 or left >= w:
                         continue
 
