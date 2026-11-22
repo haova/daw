@@ -1,7 +1,7 @@
 import curses
 import sys
 
-from .key import Key, NO_KEY
+from .key import Key, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_UP, NO_KEY
 
 FRAME_MS = 16 # 60 fps
 KEYS_ON = "\x1b[>4;2m\x1b[>25u"  # xterm modifyOtherKeys=2, kitty keyboard protocol (flags 1+8+16)
@@ -39,6 +39,15 @@ class App:
         if key == -1:
             return NO_KEY
         if key != 27:
+            # curses (keypad) tự đổi mũi tên thành KEY_*, shift+mũi tên thành KEY_SR / KEY_SF
+            if key == curses.KEY_SR:
+                return Key(KEY_UP, 1, True, False, False)
+            if key == curses.KEY_SF:
+                return Key(KEY_DOWN, 1, True, False, False)
+            if key == curses.KEY_SLEFT:
+                return Key(KEY_LEFT, 1, True, False, False)
+            if key == curses.KEY_SRIGHT:
+                return Key(KEY_RIGHT, 1, True, False, False)
             return Key(key, 1, False, False, False)
 
         # ESC đơn, không phải chuỗi "ESC ["
@@ -55,13 +64,17 @@ class App:
             if 0x40 <= ch <= 0x7E:
                 break
 
-        # không phải kiểu "u" (mũi tên...) thì bỏ qua
-        if not seq.endswith("u"):
+        # kiểu "u" là phím thường, A/B là mũi tên lên/xuống, còn lại bỏ qua
+        arrows = {"A": KEY_UP, "B": KEY_DOWN, "C": KEY_RIGHT, "D": KEY_LEFT}
+        if not (seq.endswith("u") or seq[-1] in arrows):
             return NO_KEY
 
         # tách: mã ; modifier : sự kiện
         parts = seq[:-1].split(";")
-        code = int(parts[0].split(":")[0])
+        if seq[-1] in arrows:
+            code = arrows[seq[-1]]
+        else:
+            code = int(parts[0].split(":")[0])
         mods = 1
         event = 1
         if len(parts) > 1:
