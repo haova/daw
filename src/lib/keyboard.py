@@ -6,12 +6,6 @@ import mido
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-VELOCITY_MIN = 90
-VELOCITY_MAX = 110
-
-def scale_velocity(v):
-    return VELOCITY_MIN + round((v - 1) * (VELOCITY_MAX - VELOCITY_MIN) / 126)
-
 def note_name(n):
     return f"{NOTE_NAMES[n % 12]}{n // 12 - 1}"
 
@@ -71,7 +65,7 @@ class Keyboard:
     def _on_message(self, msg):
         if msg.type == "note_on":
             # note_on với velocity 0 nghĩa là nhả phím
-            note = NoteEvent(msg.note, scale_velocity(msg.velocity) if msg.velocity > 0 else 0, msg.velocity > 0)
+            note = NoteEvent(msg.note, msg.velocity, msg.velocity > 0)
         elif msg.type == "note_off":
             note = NoteEvent(msg.note, msg.velocity, False)
         else:

@@ -1,4 +1,25 @@
 from dataclasses import dataclass, field
+from enum import Enum
+
+class Kind(Enum):
+    NOTE = "note"          # nốt thường
+    CONTROL = "control"    # lệnh CC: pitch = số CC, velocity = giá trị
+    BEND = "bend"          # pitch bend: velocity = 0-127, 64 là giữa
+    PRESSURE = "pressure"  # aftertouch: pitch = nốt (0 là cả channel), velocity = lực
+
+# số CC của các hiệu ứng hay dùng
+MODULATION = 1
+VOLUME = 7
+PAN = 10
+EXPRESSION = 11
+SUSTAIN = 64
+PORTAMENTO = 65
+SOSTENUTO = 66
+SOFT = 67
+REVERB = 91
+CHORUS = 93
+
+SWITCHES = {SUSTAIN, PORTAMENTO, SOSTENUTO, SOFT}  # công tắc: hết nốt thì nhả
 
 @dataclass(frozen=True, slots=True)
 class Note:
@@ -6,6 +27,7 @@ class Note:
     velocity: int
     start: float
     end: float
+    kind: Kind = Kind.NOTE
 
 @dataclass
 class Track:

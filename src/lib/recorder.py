@@ -1,6 +1,7 @@
 import time
+from dataclasses import replace
 
-from lib.song import Note, Song, Track
+from lib.song import Kind, Note, Song, Track
 
 DURATIONS = (0.25, 0.5, 1.0, 2.0, 4.0)  # phách: móc kép, móc đơn, đen, trắng, tròn
 FINE_STEP = 0.25                        # 1 nốt móc kép
@@ -19,7 +20,7 @@ class Recorder:
             self.song.tracks.append(Track(0, 0))
         self.track = self.song.tracks[0]  # ghi vào track đầu tiên
         self.beats = beats
-        self.cursor = self.song.length
+        self.cursor = self.track_length
         self.recording = False
         self.mode = PLAY
         self._held = set()
@@ -27,6 +28,11 @@ class Recorder:
         self._chord_start = 0.0
         self._play_to = None  # chế độ PLAY: vị trí con trỏ sau khi nhả hợp âm đang giữ
         self.set_bpm(self.song.bpm)  # file nạp vào có thể có BPM lẻ
+
+    @property
+    def track_length(self):
+        # hết nốt của track đang sửa (giây); các track khác không tính
+        return max((n.end for n in self.track.notes), default=0.0)
 
     @property
     def step(self):
@@ -44,7 +50,8 @@ class Recorder:
         if self._pending or bpm == self.song.bpm:
             return
         ratio = self.song.bpm / bpm
-        self.track.notes[:] = [Note(n.pitch, n.velocity, n.start * ratio, n.end * ratio) for n in self.track.notes]
+        for t in self.song.tracks:
+            t.notes[:] = [replace(n, start=n.start * ratio, end=n.end * ratio) for n in t.notes]
         self.cursor *= ratio
         self.song.bpm = bpm
 
@@ -87,16 +94,25 @@ class Recorder:
         bar = self.song.beats_per_bar * 60 / self.song.bpm
         low, high = (0.0, float("inf")) if bars is None else ((bars[0] - 1) * bar, bars[1] * bar)
         lowest, highest = pitches or (0, 127)
-        chosen = [(t, i) for t in self.song.tracks for i, n in enumerate(t.notes)
-                  if low - EPSILON <= n.start < high - EPSILON and lowest <= n.pitch <= highest]
+        chosen = [(self.track, i) for i, n in enumerate(self.track.notes)
+                  if n.kind is Kind.NOTE and low - EPSILON <= n.start < high - EPSILON and lowest <= n.pitch <= highest]
         if any(not 0 <= t.notes[i].pitch + semitones <= 127 for t, i in chosen):
             raise ValueError("có nốt vượt quá dải 0-127")
         moved = []
         for t, i in chosen:
             n = t.notes[i]
-            t.notes[i] = Note(n.pitch + semitones, n.velocity, n.start, n.end)
+            t.notes[i] = replace(n, pitch=n.pitch + semitones)
             moved.append(t.notes[i])
         return moved
+
+    def select_track(self, track):
+        # đổi track đang sửa, con trỏ về cuối track đó
+        if self._pending:
+            return False
+        self.track = track
+        self.cursor = self.track_length
+        self._held.clear()
+        return True
 
     def home(self):
         if self.recording and not self._pending:
@@ -104,7 +120,7 @@ class Recorder:
 
     def end(self):
         if self.recording and not self._pending:
-            self.cursor = self.song.length
+            self.cursor = self.track_length
 
     def rest(self):
         if not self.recording or self._pending:
@@ -115,7 +131,7 @@ class Recorder:
     def _shift(self, start, delta):
         # dời các nốt bắt đầu từ `start` trở đi
         notes = self.track.notes
-        notes[:] = [Note(n.pitch, n.velocity, n.start + delta, n.end + delta) if n.start >= start - EPSILON else n
+        notes[:] = [replace(n, start=n.start + delta, end=n.end + delta) if n.start >= start - EPSILON else n
                     for n in notes]
 
     def _make_room(self):
@@ -166,7 +182,7 @@ class Recorder:
             if self._pending and now - self._chord_start > CHORD_WINDOW:
                 self._advance()  # bấm nhanh nối tiếp, không phải hợp âm
             if play and not self._pending:
-                if self.cursor >= self.song.length - EPSILON:
+                if self.cursor >= self.track_length - EPSILON:
                     return  # chỉ đánh đàn mà con trỏ ở cuối bài thì không dịch nữa
                 self._play_to = self._next_cursor()
             if not self._pending:
@@ -177,7 +193,7 @@ class Recorder:
                 end = self.cursor + self.step
                 # chồng lên chính nốt đó (cùng cao độ, cùng chỗ) thì thay, không để hai nốt trùng nhau
                 self.track.notes[:] = [n for n in self.track.notes
-                                       if not (n.pitch == event.note and abs(n.start - self.cursor) < EPSILON)]
+                                       if not (n.kind is Kind.NOTE and n.pitch == event.note and abs(n.start - self.cursor) < EPSILON)]
                 self.track.notes.append(Note(event.note, event.velocity, self.cursor, end))
             self._held.add(event.note)
             self._pending = True
@@ -188,9 +204,9 @@ class Recorder:
 
     def _next_cursor(self):
         # chỉ đánh đàn: con trỏ đi hết nốt có sẵn kế tiếp (bỏ qua khoảng nghỉ phía trước), không vượt quá đầu nốt sau nó
-        ahead = [n for t in self.song.tracks for n in t.notes if n.start >= self.cursor - EPSILON]
+        ahead = [n for n in self.track.notes if n.kind is Kind.NOTE and n.start >= self.cursor - EPSILON]
         if not ahead:
-            return self.song.length
+            return self.track_length
         first = min(n.start for n in ahead)
         duration = min(n.end - n.start for n in ahead if n.start - first < EPSILON)
         later = [n.start for n in ahead if n.start - first >= EPSILON]

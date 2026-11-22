@@ -52,9 +52,14 @@ class Synth:
     def control(self, control, value, channel=0):
         self._send("control_change", channel=channel, control=control, value=value)
 
+    def bend(self, value, channel=0):
+        # value 0-127, 64 là giữa
+        self._send("pitchwheel", channel=channel, pitch=min(max((value - 64) * 128, -8192), 8191))
+
     def all_off(self):
         for ch in range(16):
-            self._send("control_change", channel=ch, control=123, value=0)
+            self._send("control_change", channel=ch, control=123, value=0)  # tắt hết nốt
+            self._send("control_change", channel=ch, control=121, value=0)  # nhả pedal, bend về giữa, expression về mặc định
 
     def send(self, msg):
         if self._port:
