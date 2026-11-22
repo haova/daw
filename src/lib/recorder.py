@@ -12,16 +12,19 @@ MIN_BPM = 20
 MAX_BPM = 300
 
 class Recorder:
-    def __init__(self, channel=0, program=0, bpm=120.0, beats=1.0):
-        self.track = Track(channel, program)
-        self.song = Song(bpm, [self.track])
+    def __init__(self, song=None, beats=1.0):
+        self.song = song or Song()
+        if not self.song.tracks:
+            self.song.tracks.append(Track(0, 0))
+        self.track = self.song.tracks[0]  # ghi vào track đầu tiên
         self.beats = beats
-        self.cursor = 0.0
+        self.cursor = self.song.length
         self.recording = False
         self.mode = INSERT
         self._held = set()
         self._pending = False
         self._chord_start = 0.0
+        self.set_bpm(self.song.bpm)  # file nạp vào có thể có BPM lẻ
 
     @property
     def step(self):
@@ -33,7 +36,7 @@ class Recorder:
 
     def set_bpm(self, bpm):
         # nốt lưu bằng giây, đổi tempo thì co giãn để vẫn đúng phách cũ
-        bpm = min(max(bpm, MIN_BPM), MAX_BPM)
+        bpm = min(max(round(bpm), MIN_BPM), MAX_BPM)
         if self._pending or bpm == self.song.bpm:
             return
         ratio = self.song.bpm / bpm
@@ -72,6 +75,32 @@ class Recorder:
         self.track.notes[:] = [n for n in self.track.notes if abs(n.start - self.cursor) > EPSILON]
         if self.mode == INSERT:
             self._shift(old, self.cursor - old)
+
+    def transpose(self, semitones, pitches=None, bars=None):
+        # dời cao độ các nốt có cao độ trong pitches (thấp, cao) và đầu nốt nằm trong bars (ô nhịp đầu, cuối, từ 1); None là không giới hạn
+        if self._pending:
+            raise ValueError("đang giữ phím")
+        bar = self.song.beats_per_bar * 60 / self.song.bpm
+        low, high = (0.0, float("inf")) if bars is None else ((bars[0] - 1) * bar, bars[1] * bar)
+        lowest, highest = pitches or (0, 127)
+        chosen = [(t, i) for t in self.song.tracks for i, n in enumerate(t.notes)
+                  if low - EPSILON <= n.start < high - EPSILON and lowest <= n.pitch <= highest]
+        if any(not 0 <= t.notes[i].pitch + semitones <= 127 for t, i in chosen):
+            raise ValueError("có nốt vượt quá dải 0-127")
+        moved = []
+        for t, i in chosen:
+            n = t.notes[i]
+            t.notes[i] = Note(n.pitch + semitones, n.velocity, n.start, n.end)
+            moved.append(t.notes[i])
+        return moved
+
+    def home(self):
+        if self.recording and not self._pending:
+            self.cursor = 0.0
+
+    def end(self):
+        if self.recording and not self._pending:
+            self.cursor = self.song.length
 
     def rest(self):
         if not self.recording or self._pending:

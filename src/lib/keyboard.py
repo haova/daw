@@ -1,4 +1,5 @@
 import queue
+import re
 from collections import namedtuple
 
 import mido
@@ -13,6 +14,15 @@ def scale_velocity(v):
 
 def note_name(n):
     return f"{NOTE_NAMES[n % 12]}{n // 12 - 1}"
+
+def parse_note(text):
+    # "C4", "c#3", "Bb2" -> số nốt MIDI, không phải tên nốt thì None
+    m = re.fullmatch(r"([A-Ga-g])([#b]?)(-?\d+)", text)
+    if not m:
+        return None
+    letter, accidental, octave = m.groups()
+    pitch = NOTE_NAMES.index(letter.upper()) + {"#": 1, "b": -1, "": 0}[accidental] + (int(octave) + 1) * 12
+    return pitch if 0 <= pitch <= 127 else None
 
 # note: số nốt MIDI (0-127), velocity: lực bấm, on: True nhấn / False nhả
 class NoteEvent(namedtuple("NoteEvent", "note velocity on")):

@@ -1,7 +1,7 @@
 import curses
 import sys
 
-from .key import Key, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_UP, NO_KEY
+from .key import Key, KEY_DOWN, KEY_END, KEY_HOME, KEY_LEFT, KEY_RIGHT, KEY_UP, NO_KEY
 
 FRAME_MS = 16 # 60 fps
 KEYS_ON = "\x1b[>4;2m\x1b[>25u"  # xterm modifyOtherKeys=2, kitty keyboard protocol (flags 1+8+16)
@@ -64,17 +64,20 @@ class App:
             if 0x40 <= ch <= 0x7E:
                 break
 
-        # kiểu "u" là phím thường, A/B là mũi tên lên/xuống, còn lại bỏ qua
-        arrows = {"A": KEY_UP, "B": KEY_DOWN, "C": KEY_RIGHT, "D": KEY_LEFT}
-        if not (seq.endswith("u") or seq[-1] in arrows):
+        # kiểu "u" là phím thường, A-D mũi tên, H/F và 1~ 4~ 7~ 8~ là Home/End, còn lại bỏ qua
+        arrows = {"A": KEY_UP, "B": KEY_DOWN, "C": KEY_RIGHT, "D": KEY_LEFT, "H": KEY_HOME, "F": KEY_END}
+        tilde = {1: KEY_HOME, 7: KEY_HOME, 4: KEY_END, 8: KEY_END}
+        parts = seq[:-1].split(";")
+        if seq.endswith("u"):
+            code = int(parts[0].split(":")[0])
+        elif seq[-1] in arrows:
+            code = arrows[seq[-1]]
+        elif seq.endswith("~") and parts[0].isdigit() and int(parts[0]) in tilde:
+            code = tilde[int(parts[0])]
+        else:
             return NO_KEY
 
         # tách: mã ; modifier : sự kiện
-        parts = seq[:-1].split(";")
-        if seq[-1] in arrows:
-            code = arrows[seq[-1]]
-        else:
-            code = int(parts[0].split(":")[0])
         mods = 1
         event = 1
         if len(parts) > 1:

@@ -1,10 +1,14 @@
+import argparse
 import curses
+from dataclasses import replace
+import os
 
 from lib.app import App
 from lib.component import Component
-from lib.key import (BACKSPACE, ENTER, ESC, SPACE, KEY_B, KEY_D, KEY_DOWN, KEY_I, KEY_LBRACKET, KEY_LEFT, KEY_M, KEY_O, KEY_P, KEY_R,
+from lib.key import (BACKSPACE, ENTER, ESC, SPACE, KEY_B, KEY_D, KEY_DOWN, KEY_END, KEY_HOME, KEY_I, KEY_LBRACKET, KEY_LEFT, KEY_M, KEY_O, KEY_P, KEY_R, KEY_S,
                      KEY_RBRACKET, KEY_RIGHT, KEY_SLASH, KEY_UP)
-from lib.keyboard import Keyboard, note_name
+from lib import midi as midi_file
+from lib.keyboard import Keyboard, note_name, parse_note, scale_velocity
 from lib.player import Player
 from lib.recorder import INSERT, OVERWRITE, Recorder
 from lib.synth import Synth
@@ -20,9 +24,10 @@ MODE_KEYS = {KEY_I: INSERT, KEY_O: OVERWRITE}
 METERS = [(2, 4), (3, 4), (4, 4), (5, 4), (6, 8), (7, 8), (9, 8), (12, 8)]
 
 class TopBar(Component):
-    def __init__(self, recorder, player):
+    def __init__(self, recorder, player, output=None):
         super().__init__()
         self.recorder = recorder
+        self.output = output
         self.player = player
         self.text = ""
         self.selected = None  # phím tắt của mục đang chỉnh: B, M hoặc D
@@ -42,6 +47,9 @@ class TopBar(Component):
             return False
         if key.code == ESC and self.player.playing:
             self._stop_playing()
+            return True
+        if key.code == KEY_S:
+            self._save()
             return True
         if key.code == KEY_P:
             if self.player.playing:
@@ -67,6 +75,16 @@ class TopBar(Component):
             self._adjust(1 if key.code == KEY_UP else -1, key.shift)
             return True
         return False
+
+    def _save(self):
+        if not self.output:
+            self.text = "chưa có file, chạy với -o FILE"
+            return
+        try:
+            midi_file.write(self.recorder.song, self.output)
+            self.text = f"đã lưu {self.output}"
+        except OSError as e:
+            self.text = f"không lưu được: {e}"
 
     def _stop_playing(self):
         # dừng phát, con trỏ ghi âm ở đúng chỗ đang phát
@@ -100,6 +118,7 @@ class TopBar(Component):
             ("D", "Duration", f"{self.recorder.beats * SIXTEENTHS_PER_BEAT:g}"),
             ("I", "Insert", ""),
             ("O", "Overwrite", ""),
+            ("S", "Save", ""),
             ("P", "Pause" if self.player.playing else "Play", ""),
         )
         x = 1
@@ -125,6 +144,7 @@ class DisplayKeyboard(Component):
         super().__init__()
         self.pressed = set()  # số nốt đang bấm
         self.low = LOW_NOTE   # nốt thấp nhất đang hiện ở dưới cùng
+        self.focus = ()       # nốt cần hiện thêm một lần (vd. vừa dời), dịch bàn phím nếu đang ngoài màn hình
 
     def on_note(self, note):
         if note.on:
@@ -138,7 +158,8 @@ class DisplayKeyboard(Component):
         self.low = min(max(self.low, MIN_NOTE), max_low)
 
         # copy, vì luồng mido sửa tập này; nốt ngoài C1-C9 không hiện nên bỏ qua
-        notes = tuple(n for n in self.pressed if MIN_NOTE <= n <= MAX_NOTE)
+        notes = tuple(n for n in {*self.pressed, *self.focus} if MIN_NOTE <= n <= MAX_NOTE)
+        self.focus = ()
         if not notes:
             return
 
@@ -213,6 +234,12 @@ class View(Component):
     def handle_key(self, key):
         if key.code == KEY_R and key.event == 1:
             self.recorder.toggle()
+            return True
+        if key.code in (KEY_HOME, KEY_END) and key.event != 3:
+            if key.code == KEY_HOME:
+                self.recorder.home()
+            else:
+                self.recorder.end()
             return True
         if key.code in (KEY_LEFT, KEY_RIGHT) and key.event != 3:
             self.recorder.move(1 if key.code == KEY_RIGHT else -1, fine=key.shift)
@@ -325,6 +352,10 @@ class CommandLine(Component):
     def rect(self, h, w):
         return (h - 1, 0, 1, w)
 
+    def resize(self, win):
+        super().resize(win)
+        curses.init_pair(8, curses.COLOR_RED, -1)
+
     def handle_key(self, key):
         if not self.active:
             if key.code == KEY_SLASH and key.event != 3:
@@ -344,7 +375,7 @@ class CommandLine(Component):
             self.active = False
             self.text = ""
             if self.on_command:
-                self.on_command(command)
+                self.text = self.on_command(command) or ""  # kết quả hiện trên dòng lệnh tới lần nhập sau
         elif key.code == BACKSPACE:
             self.text = self.text[:-1]
         elif key.text.isprintable():
@@ -356,30 +387,87 @@ class CommandLine(Component):
         h, w = win.getmaxyx()
         win.erase()
 
-        line = (self.PROMPT + self.text) if self.active else self.text
-        win.addstr(0, 0, line[:w - 2])
+        # dấu nhắc đỏ luôn hiện, sau đó là lệnh đang gõ hoặc kết quả lệnh trước
+        win.addstr(0, 0, self.PROMPT, curses.color_pair(8))
+        text = self.text[:max(0, w - len(self.PROMPT) - 2)]
+        win.addstr(0, len(self.PROMPT) + 1, text)
         if self.active:
-            win.addstr(0, min(len(line), w - 2), " ", curses.A_REVERSE)
+            win.addstr(0, len(self.PROMPT) + 1 + len(text), " ", curses.A_REVERSE)
 
         super().draw()
 
+def parse_selection(text):
+    # "C4:3" nốt C4 ở ô nhịp 3, "C3:E4" dải nốt, "2:5" dải ô nhịp, "C4" một nốt, "3" một ô nhịp, rỗng là cả bài
+    items = []
+    for part in text.split(":") if text else []:
+        pitch = parse_note(part)
+        if pitch is not None:
+            items.append(("note", pitch))
+        elif part.isdigit() and int(part) >= 1:
+            items.append(("bar", int(part)))
+        else:
+            raise ValueError(f"không hiểu '{part}'")
+    if len(items) > 2:
+        raise ValueError("chọn tối đa 2 phần, cách nhau bởi :")
+    pitches = sorted(v for kind, v in items if kind == "note")
+    bars = sorted(v for kind, v in items if kind == "bar")
+    return (pitches[0], pitches[-1]) if pitches else None, (bars[0], bars[-1]) if bars else None
+
 def main():
-    recorder = Recorder()
-    recorder.start()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-o", "--output", metavar="FILE", help="file .mid để mở (nếu có) và lưu vào bằng phím S")
+    args = parser.parse_args()
+
+    song = None
+    if args.output and os.path.exists(args.output):
+        try:
+            song = midi_file.load(args.output)
+            for track in song.tracks:
+                track.notes[:] = [replace(n, velocity=scale_velocity(n.velocity)) for n in track.notes]
+        except (OSError, ValueError) as e:
+            parser.error(f"không mở được {args.output}: {e}")
+
+    recorder = Recorder(song)
+    recorder.resume()
     synth = Synth(gain=1.0)
     player = Player(synth, recorder.song, on_end=recorder.resume)
-    topbar = TopBar(recorder, player)
+    topbar = TopBar(recorder, player, args.output)
     commandline = CommandLine()
+
+    def run_command(command):
+        words = command.split()
+        if not words:
+            return ""
+        if words[0] not in ("t", "transpose"):
+            return f"không có lệnh {words[0]}"
+        usage = "dùng: t [CHỌN] SỐ_NỬA_CUNG, CHỌN: C4:3 | C3:E4 | 2:5 | C4 | 3, bỏ trống là cả bài"
+        args = words[1:]
+        if not 1 <= len(args) <= 2:
+            return usage
+        try:
+            semitones = int(args[-1])
+            pitches, bars = parse_selection(args[0] if len(args) == 2 else "")
+            moved = recorder.transpose(semitones, pitches, bars)
+            keyboard.focus = [n.pitch for n in moved]
+            return f"đã dời {len(moved)} nốt"
+        except ValueError as e:
+            return usage if "int()" in str(e) else str(e)
+
+    commandline.on_command = run_command
     keyboard = DisplayKeyboard()
     view = View(keyboard, recorder, player)
+    if recorder.track.notes:
+        pitches = sorted(n.pitch for n in recorder.track.notes)
+        keyboard.low = pitches[len(pitches) // 2] - 12  # đưa bàn phím tới vùng nốt của bài
     midi = Keyboard(on_note=[
-        synth.play,
+        lambda note: synth.play(note, recorder.track.channel),
         recorder.on_note,
         lambda note: topbar.set_text(midi.held_text),
         keyboard.on_note,
     ])
     try:
         synth.open()
+        synth.program(recorder.track.program, recorder.track.channel)
         midi.open()
         curses.wrapper(App([commandline, topbar, keyboard, view], midi).run)
     except KeyboardInterrupt:
