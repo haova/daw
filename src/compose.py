@@ -1,19 +1,18 @@
 import argparse
 import curses
-import math
 import os
 
 from lib import midi as midi_file
 from lib.app import App
 from lib.component import Component
 from lib.gm import GM
-from lib.key import BACKSPACE, ENTER, ESC, KEY_DOWN, KEY_LEFT, KEY_N, KEY_RIGHT, KEY_UP
+from lib.key import BACKSPACE, ENTER, ESC, KEY_DOWN, KEY_END, KEY_HOME, KEY_LBRACKET, KEY_LEFT, KEY_N, KEY_RBRACKET, KEY_RIGHT, KEY_UP
 from lib.keyboard import Keyboard
 from lib.player import Player
 from lib.recorder import PLAY, Recorder
 from lib.song import Track
 from lib.synth import DRUM_CHANNEL, Synth
-from piano import CommandLine, TopBar, build_editor, run_command
+from piano import CELLS_PER_BEAT, CommandLine, TopBar, build_editor, run_command
 
 class TrackList(Component):
     def __init__(self, recorder, synth, say, on_open):
@@ -32,8 +31,9 @@ class TrackList(Component):
 
     def select(self, index):
         self.index = min(max(index, 0), len(self.song.tracks) - 1)
-        self.recorder.select_track(self.track)
-        self.recorder.cursor = 0.0  # phím P của thanh trên phát cả bài từ đầu
+        cursor = self.recorder.cursor
+        self.recorder.select_track(self.track)  # select_track dời con trỏ về cuối track, ở danh sách thì giữ nguyên chỗ cũ
+        self.recorder.cursor = cursor
         self.synth.program(self.track.program, self.track.channel)  # bàn phím MIDI kêu bằng nhạc cụ của track đang chọn
 
     def rect(self, h, w):
@@ -54,6 +54,8 @@ class TrackList(Component):
             step = (1 if key.shift else 8) * (1 if key.code == KEY_RIGHT else -1)  # đổi nhóm (8 nhạc cụ), Shift đổi từng cái
             self.track.program = (self.track.program + step) % 128  # hết danh sách thì vòng lại
             self.synth.program(self.track.program, self.track.channel)
+        elif key.code in (KEY_HOME, KEY_END, KEY_LBRACKET, KEY_RBRACKET):
+            self._move_cursor(key.code)
         elif key.code == ENTER:
             self.on_open(self.track)
         elif key.code == KEY_N:
@@ -63,6 +65,13 @@ class TrackList(Component):
         else:
             return False
         return True
+
+    def _move_cursor(self, code):
+        # Home/End: đầu/cuối bài; [ ]: lùi/tiến một ô nhịp. Phím P của thanh trên phát từ con trỏ này
+        recorder, song = self.recorder, self.song
+        bar = song.beats_per_bar * 60 / song.bpm
+        cursor = {KEY_HOME: 0.0, KEY_END: song.length, KEY_LBRACKET: recorder.cursor - bar, KEY_RBRACKET: recorder.cursor + bar}[code]
+        recorder.cursor = min(max(cursor, 0.0), song.length)
 
     def _new_track(self):
         used = {t.channel for t in self.song.tracks}
@@ -145,27 +154,31 @@ class Timeline(Component):
         win.hline(0, 0, curses.ACS_HLINE, w)
         win.hline(h - 1, 0, curses.ACS_HLINE, w)
 
-        # co cả bài vừa chiều rộng, tối thiểu 4 ô nhịp, làm tròn lên ô nhịp
+        # tỉ lệ cố định như view của piano: con trỏ chạy từ trái sang phải, tới mép phải thì khối trôi dần sang trái
+        # đang phát thì con trỏ là vị trí phát, không thì là con trỏ của recorder
         song = self.song
-        bar_seconds = song.beats_per_bar * 60 / song.bpm
-        bars = max(4, math.ceil(song.length / bar_seconds - 1e-9))
-        scale = (w - 1) / (bars * bar_seconds)  # số cột mỗi giây
+        scale = song.bpm / 60 * CELLS_PER_BEAT  # số cột mỗi giây
+        head = self.player.position if self.player.playing else self.tracklist.recorder.cursor
+        head_cell = round(head * scale)
+        origin = max(0, head_cell - (w - 1))
+        cursor_x = head_cell - origin
 
-        # vạch ô nhịp màu xám, số ô nhịp ở hàng border dưới cùng; ô nhịp quá hẹp thì thưa bớt
-        every = max(1, math.ceil(4 / (bar_seconds * scale)))
-        for bar in range(0, bars + 1, every):
-            x = round(bar * bar_seconds * scale)
+        # vạch ô nhịp màu xám chạy suốt khuôn nhạc, số ô nhịp ở hàng border dưới cùng
+        bar_seconds = song.beats_per_bar * 60 / song.bpm
+        bar = int(origin / scale // bar_seconds)
+        while True:
+            x = round(bar * bar_seconds * scale) - origin
             if x >= w:
                 break
-            self._vline(x, curses.color_pair(7))
-            number = str(bar + 1)
-            if x + len(number) <= w:
-                self._put(h - 1, x, number)
+            if x >= 0:
+                self._vline(x, curses.color_pair(7))
+                number = str(bar + 1)
+                if x + len(number) <= w:
+                    self._put(h - 1, x, number)
+            bar += 1
 
-        # con trỏ là vị trí đang phát, không phát thì ở đầu bài
-        x = round((self.player.position if self.player.playing else 0.0) * scale)
-        self._vline(min(x, w - 1))
-        self._put(0, min(x, w - 1), "▼")
+        self._vline(cursor_x)
+        self._put(0, cursor_x, "▼")
 
         # mỗi track 2 hàng: hàng trên là ▆ (3/4 ô phía dưới), hàng dưới là ▂ đảo màu (3/4 ô phía trên),
         # ghép lại thành một khối liền có khe hở trên dưới nên các track không dính nhau
@@ -173,8 +186,8 @@ class Timeline(Component):
         for i, track in enumerate(song.tracks):
             if not track.notes:
                 continue
-            left = round(min(n.start for n in track.notes) * scale)
-            right = max(round(max(n.end for n in track.notes) * scale), left + 1)
+            left = round(min(n.start for n in track.notes) * scale) - origin
+            right = max(round(max(n.end for n in track.notes) * scale) - origin, left + 1)
             if right <= 0 or left >= w:
                 continue
             attr = curses.color_pair(10 if i == self.tracklist.index else 6)
@@ -227,6 +240,7 @@ def main():
 
     recorder = Recorder(song)
     recorder.resume()
+    recorder.cursor = 0.0  # ở danh sách, con trỏ bắt đầu từ đầu bài
     synth = Synth(gain=1.0)
     player = Player(synth, recorder.song, on_end=recorder.resume)
     screen = Screen()

@@ -1,7 +1,7 @@
 import time
 from dataclasses import replace
 
-from lib.song import Kind, Note, Song, Track
+from lib.song import Note, Song, Track
 
 DURATIONS = (0.25, 0.5, 1.0, 2.0, 4.0)  # phách: móc kép, móc đơn, đen, trắng, tròn
 FINE_STEP = 0.25                        # 1 nốt móc kép
@@ -95,7 +95,7 @@ class Recorder:
         low, high = (0.0, float("inf")) if bars is None else ((bars[0] - 1) * bar, bars[1] * bar)
         lowest, highest = pitches or (0, 127)
         chosen = [(self.track, i) for i, n in enumerate(self.track.notes)
-                  if n.kind is Kind.NOTE and low - EPSILON <= n.start < high - EPSILON and lowest <= n.pitch <= highest]
+                  if low - EPSILON <= n.start < high - EPSILON and lowest <= n.pitch <= highest]
         if any(not 0 <= t.notes[i].pitch + semitones <= 127 for t, i in chosen):
             raise ValueError("có nốt vượt quá dải 0-127")
         moved = []
@@ -193,7 +193,7 @@ class Recorder:
                 end = self.cursor + self.step
                 # chồng lên chính nốt đó (cùng cao độ, cùng chỗ) thì thay, không để hai nốt trùng nhau
                 self.track.notes[:] = [n for n in self.track.notes
-                                       if not (n.kind is Kind.NOTE and n.pitch == event.note and abs(n.start - self.cursor) < EPSILON)]
+                                       if not (n.pitch == event.note and abs(n.start - self.cursor) < EPSILON)]
                 self.track.notes.append(Note(event.note, event.velocity, self.cursor, end))
             self._held.add(event.note)
             self._pending = True
@@ -204,7 +204,7 @@ class Recorder:
 
     def _next_cursor(self):
         # chỉ đánh đàn: con trỏ đi hết nốt có sẵn kế tiếp (bỏ qua khoảng nghỉ phía trước), không vượt quá đầu nốt sau nó
-        ahead = [n for n in self.track.notes if n.kind is Kind.NOTE and n.start >= self.cursor - EPSILON]
+        ahead = [n for n in self.track.notes if n.start >= self.cursor - EPSILON]
         if not ahead:
             return self.track_length
         first = min(n.start for n in ahead)

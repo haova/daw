@@ -11,7 +11,6 @@ from lib import midi as midi_file
 from lib.keyboard import Keyboard, note_name, parse_note
 from lib.player import Player
 from lib.recorder import INSERT, OVERWRITE, PLAY, Recorder
-from lib.song import CHORUS, EXPRESSION, MODULATION, PAN, PORTAMENTO, REVERB, SOFT, SOSTENUTO, SUSTAIN, SWITCHES, VOLUME, Kind
 from lib.synth import Synth
 
 BLACK_KEYS = {1, 3, 6, 8, 10}  # C# D# F# G# A#
@@ -22,26 +21,7 @@ CELLS_PER_BEAT = 4             # 1 nốt đen rộng 4 ô
 SIXTEENTHS_PER_BEAT = 4        # 1 nốt đen = 4 nốt móc kép
 FIELD_KEYS = {KEY_B: "B", KEY_M: "M", KEY_D: "D"}
 MODE_KEYS = {KEY_I: INSERT, KEY_O: OVERWRITE}
-# nhãn các dòng hiệu ứng theo số CC; CC khác hiện là "CC<số>"
-LANE_LABELS = {MODULATION: "Mod", VOLUME: "Vol", PAN: "Pan", EXPRESSION: "Exp", SUSTAIN: "Ped", PORTAMENTO: "Por",
-               SOSTENUTO: "Sos", SOFT: "Sft", REVERB: "Rev", CHORUS: "Cho"}
-MIN_HEIGHT_FOR_LANES = 14      # terminal thấp hơn thì ẩn các dòng hiệu ứng
-LEVELS = "▁▂▃▄▅▆▇█"             # độ cao theo giá trị 0-127
 METERS = [(2, 4), (3, 4), (4, 4), (5, 4), (6, 8), (7, 8), (9, 8), (12, 8)]
-
-def lane_matches(lane, note):
-    _, kind, controller = lane
-    return note.kind is kind and (kind is not Kind.CONTROL or note.pitch == controller)
-
-def active_lanes(track):
-    # mỗi hiệu ứng có trong track là một dòng: (nhãn, loại, số CC), xếp theo số CC rồi tới pitch bend
-    found = {(n.kind, n.pitch if n.kind is Kind.CONTROL else None) for n in track.notes if n.kind in (Kind.CONTROL, Kind.BEND)}
-    ordered = sorted(found, key=lambda lane: (lane[0] is Kind.BEND, lane[1] or 0))
-    return [("Bnd" if kind is Kind.BEND else LANE_LABELS.get(controller, f"CC{controller}"), kind, controller) for kind, controller in ordered]
-
-def lane_count(h, track):
-    # chừa chỗ cho view: tối đa 1/3 chiều cao, terminal quá thấp thì ẩn hết
-    return min(len(active_lanes(track)), (h - 2) // 3) if h >= MIN_HEIGHT_FOR_LANES else 0
 
 class TopBar(Component):
     def __init__(self, recorder, player, output=None, fields="BMDIOSP", on_quit=None, solo=True):
@@ -262,9 +242,6 @@ class View(Component):
         self.recorder = recorder
         self.song = recorder.song
         self.time = 0.0           # giây ở cột trái cùng
-        self.origin = 0           # ô ở cột trái cùng, theo lần vẽ gần nhất
-        self.cell_scale = 1.0
-        self.cursor_x = 0
 
     @property
     def scale(self):
@@ -331,7 +308,6 @@ class View(Component):
         origin = max(0, head_cell - (w - 1))
         self.time = origin / scale
         cursor_x = head_cell - origin
-        self.origin, self.cell_scale, self.cursor_x = origin, scale, cursor_x  # cho các dòng hiệu ứng vẽ cùng trục thời gian
 
         # vạch ô nhịp màu xám chạy suốt view, số ô nhịp ở hàng border dưới cùng
         song = self.recorder.song
@@ -354,10 +330,8 @@ class View(Component):
         if cursor_x is not None:
             self._vline(cursor_x)
 
-        # chỉ vẽ nốt của track đang sửa, hiệu ứng nằm ở các dòng riêng bên dưới
+        # chỉ vẽ nốt của track đang sửa
         for n in self.recorder.track.notes:
-            if n.kind is not Kind.NOTE:
-                continue
             row = h - 2 - (n.pitch - self.keyboard.low)
             left = round(n.start * scale) - origin
             right = max(round(n.end * scale) - origin, left + 1)
@@ -381,67 +355,6 @@ class View(Component):
         if cursor_x is not None:
             win.addstr(0, cursor_x, "▼")
 
-        super().draw()
-
-class Lanes(Component):
-    # các dòng hiệu ứng đè lên đáy bàn phím và view (không làm chúng thấp đi), dùng chung trục thời gian với view nên trượt theo con trỏ
-    def __init__(self, view, recorder):
-        super().__init__()
-        self.view = view
-        self.recorder = recorder
-
-    def rect(self, h, w):
-        count = lane_count(h, self.recorder.track)
-        # các hàng ngay trên đường viền dưới của bàn phím và view; không có hiệu ứng thì ẩn: cửa sổ 1 ô không vẽ gì
-        return (h - 2 - count, 0, count, w) if count else (h - 1, w - 1, 1, 1)
-
-    def resize(self, win):
-        super().resize(win)
-        curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_CYAN)
-        curses.init_pair(6, curses.COLOR_CYAN, -1)
-
-    def _put(self, y, x, text, attr=0):
-        try:
-            self.win.addstr(y, x, text, attr)
-        except curses.error:
-            pass
-
-    def draw(self):
-        win = self.win
-        h, w = win.getmaxyx()
-        if (h, w) == (1, 1):
-            return  # ẩn
-        win.erase()
-        view = self.view
-        left_edge = 5  # cột bắt đầu của view
-        cursor = left_edge + view.cursor_x
-        for row, lane in enumerate(active_lanes(self.recorder.track)):
-            label, kind, controller = lane
-            if row >= h:
-                break
-            self._put(row, 0, label)
-            self._put(row, left_edge - 1, "▌")  # lấp lại viền phải của bàn phím mà cửa sổ này đè lên
-            if left_edge <= cursor < w:
-                self._put(row, cursor, "│")
-            for n in self.recorder.track.notes:
-                if not lane_matches(lane, n):
-                    continue
-                start = round(n.start * view.cell_scale) - view.origin
-                end = max(round(n.end * view.cell_scale) - view.origin, start + 1)
-                body = (max(start + 1, 0), min(end, w - left_edge))
-                if end <= 0 or start >= w - left_edge:
-                    continue
-                if kind is Kind.CONTROL and controller in SWITCHES:
-                    # công tắc: thân tô nền, ô đầu là ▐ như nốt trong view
-                    if body[0] < body[1]:
-                        self._put(row, left_edge + body[0], " " * (body[1] - body[0]), curses.color_pair(5))
-                    if start >= 0:
-                        self._put(row, left_edge + start, "▐", curses.color_pair(6))
-                else:
-                    # mức giá trị: ký tự cao thấp theo velocity, giữ từ đầu tới cuối nốt
-                    glyph = LEVELS[min(n.velocity * len(LEVELS) // 128, len(LEVELS) - 1)]
-                    first = max(start, 0)
-                    self._put(row, left_edge + first, glyph * (min(end, w - left_edge) - first), curses.color_pair(6))
         super().draw()
 
 class CommandLine(Component):
@@ -536,7 +449,7 @@ def run_command(command, recorder, keyboard):
     except ValueError as e:
         return usage if "int()" in str(e) else str(e)
 
-Editor = namedtuple("Editor", "commandline topbar keyboard view lanes")
+Editor = namedtuple("Editor", "commandline topbar keyboard view")
 
 def build_editor(recorder, player, output=None, label="", fields="BMDIOSP", on_quit=None):
     # các component của màn hình piano, sửa track recorder.track
@@ -548,7 +461,7 @@ def build_editor(recorder, player, output=None, label="", fields="BMDIOSP", on_q
     if recorder.track.notes:
         pitches = sorted(n.pitch for n in recorder.track.notes)
         keyboard.low = pitches[len(pitches) // 2] - 12  # đưa bàn phím tới vùng nốt của bài
-    return Editor(commandline, topbar, keyboard, view, Lanes(view, recorder))
+    return Editor(commandline, topbar, keyboard, view)
 
 def main():
     parser = argparse.ArgumentParser()

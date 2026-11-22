@@ -13,7 +13,6 @@ class App:
         self.midi = midi
         self.running = True
         self.stdscr = None
-        self._rects = []
 
     def set_components(self, components):
         # đổi màn hình: thay danh sách component rồi dựng lại cửa sổ
@@ -39,17 +38,9 @@ class App:
 
     def _build_windows(self, stdscr):
         h, w = stdscr.getmaxyx()
-        self._rects = [c.rect(h, w) for c in self.components]
-        for c, (y, x, ch, cw) in zip(self.components, self._rects):
+        for c in self.components:
+            y, x, ch, cw = c.rect(h, w)
             c.resize(curses.newwin(ch, cw, y, x))
-
-    def _relayout_if_needed(self, stdscr):
-        # vị trí cửa sổ của component có thể đổi theo dữ liệu (vd. số dòng hiệu ứng), đổi thì dựng lại cả bố cục
-        h, w = stdscr.getmaxyx()
-        if self._rects != [c.rect(h, w) for c in self.components]:
-            stdscr.erase()
-            stdscr.refresh()
-            self._build_windows(stdscr)
 
     def _read_key(self, stdscr):
         # phím thường
@@ -136,8 +127,6 @@ class App:
                 for c in self.components:
                     if c.handle_key(key):
                         break
-
-            self._relayout_if_needed(stdscr)
 
             # vẽ: mỗi component gọi win.noutrefresh(), App flush một lần
             for c in self.components:
