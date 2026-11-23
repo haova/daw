@@ -14,7 +14,13 @@ juce_add_console_app(engine
     NEEDS_WEB_BROWSER FALSE
     NEEDS_CURL FALSE)
 
-target_sources(engine PRIVATE src/engine/Main.cpp)
+target_sources(engine PRIVATE
+    src/engine/Main.cpp
+    src/engine/audio/AudioEngine.cpp
+    src/engine/midi/MidiInputMonitor.cpp
+    src/engine/synth/SineSynth.cpp)
+
+target_include_directories(engine PRIVATE src/engine)
 
 target_compile_definitions(engine PRIVATE
     JUCE_WEB_BROWSER=0
@@ -23,6 +29,7 @@ target_compile_definitions(engine PRIVATE
 target_link_libraries(engine
     PRIVATE
         juce::juce_core
+        juce::juce_audio_devices
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
