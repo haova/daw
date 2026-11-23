@@ -51,6 +51,9 @@ class TrackList(Component):
         if key.code in (KEY_UP, KEY_DOWN):
             self.select(self.index + (1 if key.code == KEY_DOWN else -1))
         elif key.code in (KEY_LEFT, KEY_RIGHT):
+            if self.track.channel == DRUM_CHANNEL:
+                self.say("track trống (channel 10) không đổi nhạc cụ được")
+                return True
             step = (1 if key.shift else 8) * (1 if key.code == KEY_RIGHT else -1)  # đổi nhóm (8 nhạc cụ), Shift đổi từng cái
             self.track.program = (self.track.program + step) % 128  # hết danh sách thì vòng lại
             self.synth.program(self.track.program, self.track.channel)
@@ -105,12 +108,12 @@ class TrackList(Component):
                 row = 1 + i * height + k
                 if row >= h - 1:
                     break
-                name = f" {GM[track.program]}" if k == 0 else ""  # tên ở hàng trên của track
+                name = f" {track_name(track)}" if k == 0 else ""  # tên ở hàng trên của track
                 try:
                     if i == self.index:
                         # track đang chọn: dải nền sáng chạy hết hàng, hai mũi tên đỏ nằm trong dải ở hai đầu báo ←→ đổi được nhạc cụ
                         win.addstr(row, 0, (" " + name).ljust(w - 1)[:w - 1], curses.color_pair(11))
-                        if k == 0:
+                        if k == 0 and track.channel != DRUM_CHANNEL:  # trống không đổi nhạc cụ nên không có mũi tên
                             win.addstr(row, 0, "◄", curses.color_pair(12))
                             win.addstr(row, w - 2, "►", curses.color_pair(12))
                     else:
@@ -199,6 +202,11 @@ class Timeline(Component):
                 self._put(row + 1, body[0], "▂" * (body[1] - body[0]), attr | curses.A_REVERSE)
         super().draw()
 
+def track_name(track):
+    # channel 10 là trống theo chuẩn GM, program ở đây không phải nhạc cụ nên không tra GM
+    return "Drums" if track.channel == DRUM_CHANNEL else GM[track.program]
+
+
 def names_width(w):
     return min(28, w // 2)  # cột tên nhạc cụ (tên dài nhất 23 chữ)
 
@@ -253,7 +261,7 @@ def main():
         recorder.set_mode(PLAY)
         recorder.resume()
         synth.program(track.program, track.channel)
-        screen.editor = build_editor(recorder, player, args.output, GM[track.program], "BMDIOSPQ", close_editor)
+        screen.editor = build_editor(recorder, player, args.output, track_name(track), "BMDIOSPQ", close_editor)
         app.set_components([Back(screen.editor, player, close_editor), *screen.editor])
 
     def close_editor():

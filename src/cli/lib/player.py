@@ -24,6 +24,7 @@ class Player:
         events = []
         for track in tracks:
             self.synth.program(track.program, track.channel)
+            self.synth.control(7, track.volume, track.channel)  # gain của kênh
             for n in track.notes:
                 events.append((n.start, 1, track.channel, n.pitch, n.velocity))
                 events.append((n.end, 0, track.channel, n.pitch, 0))

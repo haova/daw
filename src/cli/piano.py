@@ -5,9 +5,10 @@ import os
 
 from lib.app import App
 from lib.component import Component
-from lib.key import (BACKSPACE, ENTER, ESC, SPACE, KEY_B, KEY_D, KEY_DOWN, KEY_END, KEY_HOME, KEY_I, KEY_LBRACKET, KEY_LEFT, KEY_M, KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S,
+from lib.key import (BACKSPACE, ENTER, ESC, SPACE, KEY_B, KEY_C, KEY_D, KEY_DOWN, KEY_END, KEY_HOME, KEY_I, KEY_LBRACKET, KEY_LEFT, KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S,
                      KEY_RBRACKET, KEY_RIGHT, KEY_SLASH, KEY_UP)
 from lib import midi as midi_file
+from lib.gm import GM
 from lib.keyboard import Keyboard, note_name, parse_note
 from lib.player import Player
 from lib.recorder import INSERT, OVERWRITE, PLAY, Recorder
@@ -19,13 +20,16 @@ MIN_NOTE = 24                  # C1
 MAX_NOTE = 120                 # C9
 CELLS_PER_BEAT = 4             # 1 nốt đen rộng 4 ô
 SIXTEENTHS_PER_BEAT = 4        # 1 nốt đen = 4 nốt móc kép
-FIELD_KEYS = {KEY_B: "B", KEY_M: "M", KEY_D: "D"}
+FIELD_KEYS = {KEY_B: "B", KEY_M: "M", KEY_D: "D", KEY_N: "N"}
 MODE_KEYS = {KEY_I: INSERT, KEY_O: OVERWRITE}
+CLAMP_RANGE = (90, 110)        # velocity khi bật Clamp
 METERS = [(2, 4), (3, 4), (4, 4), (5, 4), (6, 8), (7, 8), (9, 8), (12, 8)]
 
 class TopBar(Component):
-    def __init__(self, recorder, player, output=None, fields="BMDIOSP", on_quit=None, solo=True):
+    def __init__(self, recorder, player, output=None, fields="BMDIOCNSP", on_quit=None, solo=True, synth=None):
         super().__init__()
+        self.synth = synth  # đổi nhạc cụ thì báo synth
+        self.clamp = False  # bật thì velocity bàn phím bị kẹp trong CLAMP_RANGE
         self.solo = solo  # Play chỉ phát track đang sửa, False là phát cả bài
         self.on_quit = on_quit  # gọi khi bấm Q (mục Quit)
         self.fields = fields  # các mục (theo phím tắt) được hiện và dùng, màn hình khác nhau dùng khác nhau
@@ -33,7 +37,7 @@ class TopBar(Component):
         self.output = output
         self.player = player
         self.text = ""
-        self.selected = None  # phím tắt của mục đang chỉnh: B, M hoặc D
+        self.selected = None  # phím tắt của mục đang chỉnh: B, M, D hoặc N
         self.label = ""       # tên track đang sửa, hiện sau các mục
 
     def rect(self, h, w):
@@ -68,6 +72,9 @@ class TopBar(Component):
                 length = self.recorder.track_length if self.solo else self.recorder.song.length
                 at_end = cursor >= length
                 self.player.play(0.0 if key.shift or at_end else cursor, track)
+            return True
+        if key.code == KEY_C and not key.ctrl and "C" in self.fields:
+            self.clamp = not self.clamp
             return True
         if key.code in MODE_KEYS and chr(key.code).upper() in self.fields:
             mode = MODE_KEYS[key.code]
@@ -108,6 +115,11 @@ class TopBar(Component):
         song = recorder.song
         if self.selected == "B":
             recorder.set_bpm(song.bpm + direction * (1 if fine else 10))
+        elif self.selected == "N":
+            track = recorder.track
+            track.program = (track.program + direction * (8 if fine else 1)) % 128  # Shift nhảy cả nhóm 8, hết thì vòng lại
+            if self.synth:
+                self.synth.program(track.program, track.channel)
         elif self.selected == "M":
             i = METERS.index(song.time_signature) if song.time_signature in METERS else 0
             song.time_signature = METERS[min(max(i + direction, 0), len(METERS) - 1)]
@@ -128,6 +140,8 @@ class TopBar(Component):
             ("D", "Duration", f"{self.recorder.beats * SIXTEENTHS_PER_BEAT:g}"),
             ("I", "Insert", ""),
             ("O", "Overwrite", ""),
+            ("C", "Clamp", ""),
+            ("N", "Instrument", GM[self.recorder.track.program]),
             ("S", "Save", ""),
             ("P", "Pause" if self.player.playing else "Play", ""),
             ("Q", "Quit", ""),
@@ -140,10 +154,11 @@ class TopBar(Component):
             if x + len(text) > w:
                 break
             attr = curses.A_REVERSE if self.selected == key else 0
-            if (key, self.recorder.mode) in (("I", INSERT), ("O", OVERWRITE)):
+            if (key, self.recorder.mode) in (("I", INSERT), ("O", OVERWRITE)) or (key == "C" and self.clamp):
                 attr |= curses.A_REVERSE
             win.addstr(0, x, text, attr)
-            win.addstr(0, x, label[0], attr | curses.color_pair(8))
+            i = max(label.lower().find(key.lower()), 0)  # chữ phím tắt trong tên mục, tô đỏ
+            win.addstr(0, x + i, label[i], attr | curses.color_pair(8))
             x += len(text) + 2
 
         if self.label and x + len(self.label) < w - len(self.text) - 2:
@@ -451,9 +466,9 @@ def run_command(command, recorder, keyboard):
 
 Editor = namedtuple("Editor", "commandline topbar keyboard view")
 
-def build_editor(recorder, player, output=None, label="", fields="BMDIOSP", on_quit=None):
+def build_editor(recorder, player, output=None, label="", fields="BMDIOCNSP", on_quit=None, synth=None):
     # các component của màn hình piano, sửa track recorder.track
-    topbar = TopBar(recorder, player, output, fields, on_quit)
+    topbar = TopBar(recorder, player, output, fields, on_quit, synth=synth)
     topbar.label = label
     keyboard = DisplayKeyboard()
     commandline = CommandLine(lambda command: run_command(command, recorder, keyboard))
@@ -479,10 +494,18 @@ def main():
     recorder.resume()
     synth = Synth(gain=1.0)
     player = Player(synth, recorder.song, on_end=recorder.resume)
-    editor = build_editor(recorder, player, args.output)
+    editor = build_editor(recorder, player, args.output, synth=synth)
+    def clamped(f):
+        # kẹp velocity nốt nhấn khi Clamp bật; chạy ở luồng mido nên chỉ đọc cờ
+        def wrapper(note):
+            if editor.topbar.clamp and note.on:
+                note = note._replace(velocity=min(max(note.velocity, CLAMP_RANGE[0]), CLAMP_RANGE[1]))
+            f(note)
+        return wrapper
+
     midi = Keyboard(on_note=[
-        lambda note: synth.play(note, recorder.track.channel),
-        recorder.on_note,
+        clamped(lambda note: synth.play(note, recorder.track.channel)),
+        clamped(recorder.on_note),
         lambda note: editor.topbar.set_text(midi.held_text),
         editor.keyboard.on_note,
     ])

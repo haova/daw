@@ -12,6 +12,7 @@ class Track:
     channel: int
     program: int
     notes: list[Note] = field(default_factory=list)
+    volume: int = 100  # CC7 channel volume (gain của kênh), 100 là mặc định GM
 
 @dataclass
 class Song:

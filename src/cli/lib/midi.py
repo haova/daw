@@ -5,6 +5,7 @@ from lib.song import Note, Song, Track
 def load(path):
     song = Song()
     programs = {}
+    volumes = {}  # CC7 theo channel
     open_notes = {}
     tracks = {}
     now = 0.0
@@ -13,7 +14,7 @@ def load(path):
 
     def close(channel, pitch):
         start, velocity, program = open_notes.pop((channel, pitch))
-        track = tracks.setdefault((channel, program), Track(channel, program))
+        track = tracks.setdefault((channel, program), Track(channel, program, volume=volumes.get(channel, 100)))
         track.notes.append(Note(pitch, velocity, start, now))
 
     for msg in mido.MidiFile(path):
@@ -26,6 +27,8 @@ def load(path):
             signature_found = True
         elif msg.type == "program_change":
             programs[msg.channel] = msg.program
+        elif msg.type == "control_change" and msg.control == 7:
+            volumes[msg.channel] = msg.value
         elif msg.type == "note_on" and msg.velocity > 0:
             if (msg.channel, msg.note) in open_notes:
                 close(msg.channel, msg.note)
@@ -56,7 +59,9 @@ def write(song, path, ppq=480):
     for t in song.tracks:
         if not t.notes:
             continue
-        events = [(to_tick(t.notes[0].start), 0, mido.Message("program_change", channel=t.channel, program=t.program))]
+        first = to_tick(t.notes[0].start)
+        events = [(first, 0, mido.Message("program_change", channel=t.channel, program=t.program)),
+                  (first, 0, mido.Message("control_change", channel=t.channel, control=7, value=t.volume))]
         for n in t.notes:
             start, end = to_tick(n.start), to_tick(n.end)
             events.append((start, 2, mido.Message("note_on", channel=t.channel, note=n.pitch, velocity=n.velocity)))
