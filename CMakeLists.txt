@@ -9,6 +9,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(JUCE_DIR "${CMAKE_SOURCE_DIR}/JUCE" CACHE PATH "Path to the JUCE source tree")
 add_subdirectory(${JUCE_DIR} JUCE EXCLUDE_FROM_ALL)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FLUIDSYNTH REQUIRED fluidsynth)
+
 juce_add_console_app(engine
     PRODUCT_NAME "engine"
     NEEDS_WEB_BROWSER FALSE
@@ -19,9 +22,9 @@ target_sources(engine PRIVATE
     src/engine/audio/AudioEngine.cpp
     src/engine/midi/MidiEvent.cpp
     src/engine/midi/MidiInputMonitor.cpp
-    src/engine/synth/SineSynth.cpp)
+    src/engine/synth/FluidSynthInstrument.cpp)
 
-target_include_directories(engine PRIVATE src/engine)
+target_include_directories(engine PRIVATE src/engine ${FLUIDSYNTH_INCLUDE_DIRS})
 
 target_compile_definitions(engine PRIVATE
     JUCE_WEB_BROWSER=0
@@ -31,6 +34,7 @@ target_link_libraries(engine
     PRIVATE
         juce::juce_core
         juce::juce_audio_devices
+        ${FLUIDSYNTH_LIBRARIES}
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)

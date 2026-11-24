@@ -1,6 +1,6 @@
 #pragma once
 
-#include "synth/SineSynth.h"
+#include "synth/FluidSynthInstrument.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -25,7 +25,7 @@ private:
     juce::AudioDeviceManager deviceManager;
     juce::MidiMessageCollector midiCollector;
     juce::MidiBuffer midiBlock;
-    SineSynth synth;
+    FluidSynthInstrument synth { "/usr/share/soundfonts/FluidR3_GM.sf2" };
 };
 
 } // namespace daw
