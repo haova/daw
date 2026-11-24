@@ -20,9 +20,7 @@ enum class MidiEventType
 
 juce::String toString (MidiEventType type);
 
-// Flat, JSON-friendly decode of a juce::MidiMessage. t is seconds on the
-// caller's own clock (not the device's), so ordering stays consistent
-// across input backends.
+// Flat, JSON-friendly decode of a juce::MidiMessage.
 struct MidiEvent
 {
     double t = 0.0;

@@ -1,4 +1,7 @@
 #include "AudioEngine.h"
+#include "synth/FluidSynthInstrument.h"
+#include "synth/PianoSynthInstrument.h"
+#include "synth/SampleInstrument.h"
 
 #include <iostream>
 
@@ -22,10 +25,26 @@ juce::String findPipeWireOutput (juce::AudioDeviceManager& deviceManager)
     return {};
 }
 
+std::unique_ptr<Instrument> createInstrument (const juce::String& sf2Path, const juce::String& samplePath,
+                                               int sampleRootNote)
+{
+    if (sf2Path.isNotEmpty())
+        return std::make_unique<FluidSynthInstrument> (sf2Path);
+
+    if (samplePath.isNotEmpty())
+        return std::make_unique<SampleInstrument> (samplePath, sampleRootNote);
+
+    return std::make_unique<PianoSynthInstrument>();
+}
+
 } // namespace
 
-AudioEngine::AudioEngine()
+AudioEngine::AudioEngine (const juce::String& sf2Path, const juce::String& samplePath, int sampleRootNote,
+                           float gain_)
+    : instrument (createInstrument (sf2Path, samplePath, sampleRootNote)), gain (gain_)
 {
+    midiCollector.reset (44100.0); // avoid asserting if MIDI arrives before the audio device starts
+
     juce::AudioDeviceManager::AudioDeviceSetup setup;
     setup.outputDeviceName = findPipeWireOutput (deviceManager);
 
@@ -45,7 +64,8 @@ AudioEngine::~AudioEngine()
 void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
     const auto sampleRate = device->getCurrentSampleRate();
-    synth.setCurrentPlaybackSampleRate (sampleRate);
+
+    instrument->setCurrentPlaybackSampleRate (sampleRate);
     midiCollector.reset (sampleRate);
     midiBlock.ensureSize (4096);
 
@@ -61,7 +81,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const*, int, fl
 
     midiBlock.clear();
     midiCollector.removeNextBlockOfMessages (midiBlock, numSamples);
-    synth.renderNextBlock (buffer, midiBlock, 0, numSamples);
+
+    instrument->renderNextBlock (buffer, midiBlock, 0, numSamples);
+
+    buffer.applyGain (gain);
 }
 
 } // namespace daw

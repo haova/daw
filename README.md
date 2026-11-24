@@ -1,15 +1,9 @@
 # Simple Console-based DAW
 
-Run `fluidsynth`:
+Run the engine:
 
 ```bash
-fluidsynth -a pulseaudio -m alsa_seq -g 1.0 /usr/share/soundfonts/FluidR3_GM.sf2
-```
-
-Play with `fluidsynth`:
-
-```bash
-fluidsynth -a pulseaudio -g 1.0 -i /usr/share/soundfonts/FluidR3_GM.sf2 <mid_path>
+engine live --sf2 /usr/share/soundfonts/FluidR3_GM.sf2 --velocity 80:110 --gain 3
 ```
 
 ## Layout

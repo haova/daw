@@ -1,5 +1,4 @@
 #include "MidiInputMonitor.h"
-#include "MidiEvent.h"
 
 #include <iostream>
 
@@ -48,9 +47,6 @@ void MidiInputMonitor::openAll()
 
 void MidiInputMonitor::handleIncomingMidiMessage (juce::MidiInput* source, const juce::MidiMessage& message)
 {
-    const auto t = juce::Time::getMillisecondCounterHiRes() / 1000.0;
-    std::cerr << juce::JSON::toString (toJson (decodeMidiEvent (message, t, source->getName())), true) << std::endl;
-
     onMessage (*source, message);
 }
 

@@ -12,8 +12,7 @@ struct PianoSound final : juce::SynthesiserSound
     bool appliesToChannel (int) override { return true; }
 };
 
-// FM electric piano (Rhodes-style): 1:1 carrier/modulator ratio, modulation
-// index decaying over time so the spectrum brightens on attack then softens.
+// FM electric piano (Rhodes-style): modulation index decays over time.
 class PianoVoice final : public juce::SynthesiserVoice
 {
 public:
