@@ -22,7 +22,8 @@ target_sources(engine PRIVATE
     src/engine/audio/AudioEngine.cpp
     src/engine/midi/MidiEvent.cpp
     src/engine/midi/MidiInputMonitor.cpp
-    src/engine/synth/FluidSynthInstrument.cpp)
+    src/engine/synth/FluidSynthInstrument.cpp
+    src/engine/synth/PianoSynth.cpp)
 
 target_include_directories(engine PRIVATE src/engine ${FLUIDSYNTH_INCLUDE_DIRS})
 
