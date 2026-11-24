@@ -17,6 +17,7 @@ juce_add_console_app(engine
 target_sources(engine PRIVATE
     src/engine/Main.cpp
     src/engine/audio/AudioEngine.cpp
+    src/engine/midi/MidiEvent.cpp
     src/engine/midi/MidiInputMonitor.cpp
     src/engine/synth/SineSynth.cpp)
 
